@@ -851,8 +851,15 @@ ol.work-listing {
 #account-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; }
 
 /* Delete button on work page */
+.btn-edit {
+  display: block; text-align: center; text-decoration: none;
+  background: none; border: 1px solid var(--link); color: var(--link);
+  padding: 0.3rem 0.8rem; border-radius: 3px; font-size: 0.8rem;
+  margin-bottom: 0.4rem;
+}
+.btn-edit:hover { background: var(--link); color: white; }
 .btn-delete {
   background: none; border: 1px solid #c0392b; color: #c0392b;
-  padding: 0.3rem 0.8rem; border-radius: 3px; font-size: 0.8rem; cursor: pointer;
+  padding: 0.3rem 0.8rem; border-radius: 3px; font-size: 0.8rem; cursor: pointer; width: 100%;
 }
 .btn-delete:hover { background: #c0392b; color: white; }

@@ -195,7 +195,6 @@ class FicOut(BaseModel):
     id: str
     title: str
     author: str
-    author_id: Optional[str] = None
     summary: str
     rating: str
     word_count: int
@@ -210,6 +209,18 @@ class FicOut(BaseModel):
 
 class FicDetail(FicOut):
     chapters: List[ChapterOut]
+    can_edit: bool = False
+
+
+class FicPatchIn(BaseModel):
+    title: Optional[str] = None
+    author: Optional[str] = None
+    summary: Optional[str] = None
+    rating: Optional[str] = None
+    fandoms: Optional[List[str]] = None
+    characters: Optional[List[str]] = None
+    relationships: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
 
 
 class ChapterAddIn(BaseModel):
@@ -286,7 +297,6 @@ def _get_fic_tags(conn, fic_id: str, category: str) -> List[str]:
 
 def _fic_to_dict(conn, row) -> dict:
     fid = row["id"]
-    keys = row.keys()
     chapter_count = conn.execute(
         "SELECT COUNT(*) FROM chapters WHERE fic_id = ?", (fid,)
     ).fetchone()[0]
@@ -294,7 +304,6 @@ def _fic_to_dict(conn, row) -> dict:
         id=fid,
         title=row["title"],
         author=row["author"],
-        author_id=row["author_id"] if "author_id" in keys else None,
         summary=row["summary"],
         rating=row["rating"],
         word_count=row["word_count"],
@@ -487,12 +496,65 @@ def list_fics(
 
 
 @app.get("/fics/{fic_id}", response_model=FicDetail, summary="Get a fic with all chapters")
-def get_fic(fic_id: str, conn=Depends(get_db)):
+def get_fic(fic_id: str, conn=Depends(get_db), user=Depends(_get_current_user)):
     row = conn.execute("SELECT * FROM fics WHERE id = ?", (fic_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Fic not found")
 
     base = _fic_to_dict(conn, row)
+    is_admin = user and user.get("is_admin")
+    base["can_edit"] = bool(
+        is_admin or (user and row["author_id"] and user["id"] == row["author_id"])
+    )
+    chapter_rows = conn.execute(
+        "SELECT * FROM chapters WHERE fic_id = ? ORDER BY number", (fic_id,)
+    ).fetchall()
+    base["chapters"] = [
+        dict(id=r["id"], number=r["number"], title=r["title"], content=r["content"])
+        for r in chapter_rows
+    ]
+    return base
+
+
+@app.patch("/fics/{fic_id}", response_model=FicDetail, summary="Edit a fic's metadata")
+def patch_fic(fic_id: str, data: FicPatchIn, conn=Depends(get_db), user=Depends(_get_current_user)):
+    row = conn.execute("SELECT * FROM fics WHERE id = ?", (fic_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Fic not found")
+    is_admin = user and user.get("is_admin")
+    can_edit = bool(
+        is_admin or (user and row["author_id"] and user["id"] == row["author_id"])
+    )
+    if not can_edit:
+        raise HTTPException(403, "You can only edit your own works")
+
+    updates: dict = {"updated_at": datetime.utcnow().isoformat()}
+    if data.title is not None:
+        updates["title"] = data.title.strip() or row["title"]
+    if data.author is not None:
+        updates["author"] = data.author.strip() or row["author"]
+    if data.summary is not None:
+        updates["summary"] = data.summary
+    if data.rating is not None:
+        if data.rating not in ("G", "T", "M", "E"):
+            raise HTTPException(400, "Rating must be G, T, M, or E")
+        updates["rating"] = data.rating
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(f"UPDATE fics SET {set_clause} WHERE id = ?", list(updates.values()) + [fic_id])
+
+    for category, field in [("fandom", data.fandoms), ("character", data.characters),
+                             ("relationship", data.relationships), ("freeform", data.tags)]:
+        if field is not None:
+            conn.execute(
+                "DELETE FROM fic_tags WHERE fic_id = ? AND tag_id IN "
+                "(SELECT id FROM tags WHERE category = ?)", (fic_id, category)
+            )
+            _attach_tags(conn, fic_id, field, category)
+
+    row = conn.execute("SELECT * FROM fics WHERE id = ?", (fic_id,)).fetchone()
+    base = _fic_to_dict(conn, row)
+    base["can_edit"] = can_edit
     chapter_rows = conn.execute(
         "SELECT * FROM chapters WHERE fic_id = ? ORDER BY number", (fic_id,)
     ).fetchall()

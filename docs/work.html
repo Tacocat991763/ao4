@@ -25,6 +25,7 @@
     </div>
     <div class="sidebar-box" id="owner-box" style="display:none;">
       <h3>Manage</h3>
+      <a class="btn-edit" id="edit-work-btn" href="#">Edit this work</a>
       <button class="btn-delete" id="delete-work-btn">Delete this work</button>
     </div>
   </aside>
@@ -174,22 +175,20 @@ async function loadWork() {
   }
 }
 
-// Show delete button if logged-in user owns this work
-async function maybeShowOwnerControls() {
-  const user = getStoredUser();
-  if (!user || !work) return;
-  if (work.author_id === user.id || user.is_admin) {
-    document.getElementById('owner-box').style.display = '';
-    document.getElementById('delete-work-btn').addEventListener('click', async () => {
-      if (!confirm(`Delete "${work.title}"? This cannot be undone.`)) return;
-      try {
-        await apiFetch(`/fics/${encodeURIComponent(work.id)}`, { method: 'DELETE' });
-        window.location.href = 'browse.html';
-      } catch (err) {
-        alert('Delete failed: ' + err.message);
-      }
-    });
-  }
+// Show edit/delete controls if the API says this user can edit
+function maybeShowOwnerControls() {
+  if (!work || !work.can_edit) return;
+  document.getElementById('owner-box').style.display = '';
+  document.getElementById('edit-work-btn').href = `edit.html?id=${encodeURIComponent(work.id)}`;
+  document.getElementById('delete-work-btn').addEventListener('click', async () => {
+    if (!confirm(`Delete "${work.title}"? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/fics/${encodeURIComponent(work.id)}`, { method: 'DELETE' });
+      window.location.href = 'browse.html';
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  });
 }
 
 loadWork();

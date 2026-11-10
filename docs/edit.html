@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit Work — AO4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="shell-header"></div>
+
+<div id="main" class="full-width">
+  <div id="content" style="max-width:800px;margin:0 auto;">
+
+    <div id="edit-success" class="upload-success">
+      Saved! <a id="success-link" href="#">View updated work →</a>
+    </div>
+    <div id="edit-error" class="upload-error"></div>
+
+    <form id="edit-form" autocomplete="off">
+
+      <div class="form-block">
+        <h2>Basic Info</h2>
+
+        <div class="field">
+          <label>Title <span class="required">*</span></label>
+          <input type="text" id="f-title" placeholder="Your work's title" required>
+        </div>
+
+        <div class="field">
+          <label>Author / Pen Name</label>
+          <input type="text" id="f-author" placeholder="Your name or pseudonym">
+          <div class="hint">The name shown publicly. The account that posted this work is tracked separately.</div>
+        </div>
+
+        <div class="field">
+          <label>Rating <span class="required">*</span></label>
+          <select id="f-rating" required>
+            <option value="">— Choose a rating —</option>
+            <option value="G">G — General Audiences</option>
+            <option value="T">T — Teen &amp; Up Audiences</option>
+            <option value="M">M — Mature</option>
+            <option value="E">E — Explicit</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Summary</label>
+          <textarea id="f-summary" placeholder="A brief description of your work."></textarea>
+        </div>
+      </div>
+
+      <div class="form-block">
+        <h2>Tags</h2>
+
+        <div class="field">
+          <label>Fandoms</label>
+          <input type="text" id="f-fandoms" placeholder="e.g. Harry Potter, Doctor Who">
+          <div class="hint">Comma-separated.</div>
+        </div>
+
+        <div class="field">
+          <label>Relationships</label>
+          <input type="text" id="f-relationships" placeholder="e.g. Harry Potter/Ginny Weasley">
+          <div class="hint">Comma-separated. / for romantic, &amp; for platonic.</div>
+        </div>
+
+        <div class="field">
+          <label>Characters</label>
+          <input type="text" id="f-characters" placeholder="e.g. Hermione Granger, Ron Weasley">
+          <div class="hint">Comma-separated.</div>
+        </div>
+
+        <div class="field">
+          <label>Additional Tags</label>
+          <input type="text" id="f-tags" placeholder="e.g. Hurt/Comfort, Slow Burn">
+          <div class="hint">Comma-separated.</div>
+        </div>
+      </div>
+
+      <div class="form-block" style="text-align:right;border-top:3px solid var(--red);">
+        <a id="cancel-link" href="#" class="btn-secondary" style="display:inline-block;margin-right:1rem;padding:0.55rem 1.1rem;text-decoration:none;">Cancel</a>
+        <button type="submit" class="btn-submit" id="submit-btn">Save Changes</button>
+      </div>
+
+    </form>
+
+  </div>
+</div>
+
+<div id="shell-footer"></div>
+<div id="shell-modal"></div>
+
+<script src="app.js"></script>
+<script>
+injectShell('');
+
+const ficId = getParam('id');
+
+if (!ficId) {
+  document.getElementById('content').innerHTML =
+    '<div class="error-msg" style="margin-top:2rem;">No work ID. <a href="browse.html">Browse works</a></div>';
+}
+
+document.getElementById('cancel-link').href = `work.html?id=${ficId}`;
+
+function splitTags(str) {
+  return str.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+async function loadFic() {
+  try {
+    const work = await apiFetch(`/fics/${encodeURIComponent(ficId)}`);
+
+    if (!work.can_edit) {
+      document.getElementById('content').innerHTML =
+        '<div class="error-msg" style="margin-top:2rem;">You don\'t have permission to edit this work. <a href="login.html">Log in</a></div>';
+      return;
+    }
+
+    document.title = `Edit: ${work.title} — AO4`;
+
+    document.getElementById('f-title').value       = work.title;
+    document.getElementById('f-author').value      = work.author;
+    document.getElementById('f-rating').value      = work.rating;
+    document.getElementById('f-summary').value     = work.summary || '';
+    document.getElementById('f-fandoms').value     = work.fandoms.join(', ');
+    document.getElementById('f-relationships').value = work.relationships.join(', ');
+    document.getElementById('f-characters').value  = work.characters.join(', ');
+    document.getElementById('f-tags').value        = work.tags.join(', ');
+
+  } catch (e) {
+    document.getElementById('edit-error').textContent = 'Could not load work: ' + e.message;
+    document.getElementById('edit-error').classList.add('show');
+  }
+}
+
+document.getElementById('edit-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const title   = document.getElementById('f-title').value.trim();
+  const author  = document.getElementById('f-author').value.trim();
+  const rating  = document.getElementById('f-rating').value;
+  const summary = document.getElementById('f-summary').value.trim();
+
+  if (!title || !rating) {
+    showError('Title and Rating are required.');
+    return;
+  }
+
+  const payload = {
+    title,
+    author,
+    rating,
+    summary,
+    fandoms:       splitTags(document.getElementById('f-fandoms').value),
+    relationships: splitTags(document.getElementById('f-relationships').value),
+    characters:    splitTags(document.getElementById('f-characters').value),
+    tags:          splitTags(document.getElementById('f-tags').value),
+  };
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  hideMessages();
+
+  try {
+    const result = await apiFetch(`/fics/${encodeURIComponent(ficId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const successEl = document.getElementById('edit-success');
+    document.getElementById('success-link').href = `work.html?id=${result.id}`;
+    successEl.classList.add('show');
+    successEl.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    showError('Save failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
+  }
+});
+
+function showError(msg) {
+  const el = document.getElementById('edit-error');
+  el.textContent = msg;
+  el.classList.add('show');
+  el.scrollIntoView({ behavior: 'smooth' });
+}
+
+function hideMessages() {
+  document.getElementById('edit-success').classList.remove('show');
+  document.getElementById('edit-error').classList.remove('show');
+}
+
+loadFic();
+</script>
+</body>
+</html>
