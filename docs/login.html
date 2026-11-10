@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log In — AO4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="shell-header"></div>
+
+<div id="main" class="full-width">
+  <div id="content" style="max-width:480px;margin:2rem auto;">
+
+    <div id="auth-box">
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tab-login" onclick="showTab('login')">Sign In</button>
+        <button class="auth-tab" id="tab-register" onclick="showTab('register')">Create Account</button>
+      </div>
+
+      <div id="auth-error" class="upload-error"></div>
+      <div id="auth-success" class="upload-success"></div>
+
+      <!-- Sign In -->
+      <form id="login-form" class="auth-form" autocomplete="off">
+        <div class="form-block" style="border:none;padding:1.5rem 1.5rem 0.5rem;">
+          <div class="field">
+            <label>Username</label>
+            <input type="text" id="login-username" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input type="password" id="login-password" autocomplete="current-password" required>
+          </div>
+          <div style="text-align:right;margin-top:1rem;">
+            <button type="submit" class="btn-submit" id="login-btn">Sign In</button>
+          </div>
+        </div>
+      </form>
+
+      <!-- Create Account -->
+      <form id="register-form" class="auth-form" style="display:none" autocomplete="off">
+        <div class="form-block" style="border:none;padding:1.5rem 1.5rem 0.5rem;">
+          <div class="field">
+            <label>Username <span class="required">*</span></label>
+            <input type="text" id="reg-username" autocomplete="username" required>
+            <div class="hint">Letters, numbers, _ and - only. 2–50 characters.</div>
+          </div>
+          <div class="field">
+            <label>Email <span class="required">*</span></label>
+            <input type="email" id="reg-email" autocomplete="email" required>
+          </div>
+          <div class="field">
+            <label>Password <span class="required">*</span></label>
+            <input type="password" id="reg-password" autocomplete="new-password" required>
+            <div class="hint">At least 6 characters.</div>
+          </div>
+          <div style="text-align:right;margin-top:1rem;">
+            <button type="submit" class="btn-submit" id="register-btn">Create Account</button>
+          </div>
+        </div>
+      </form>
+
+    </div>
+
+    <!-- Logged-in state -->
+    <div id="account-box" style="display:none;">
+      <div class="form-block">
+        <h2 id="account-greeting"></h2>
+        <p style="font-size:0.9rem;color:#555;margin:0 0 1rem;">You're signed in.</p>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+          <a href="upload.html" class="btn-submit" style="text-decoration:none;">Post a Work</a>
+          <a href="browse.html" class="btn-secondary" style="text-decoration:none;">Browse</a>
+          <button class="btn-secondary" id="account-logout-btn">Log Out</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="shell-footer"></div>
+<div id="shell-modal"></div>
+
+<script src="app.js"></script>
+<script>
+injectShell('');
+
+// If already logged in, show account box
+const existing = getStoredUser();
+if (existing) {
+  document.getElementById('auth-box').style.display = 'none';
+  document.getElementById('account-box').style.display = '';
+  document.getElementById('account-greeting').textContent = `Hello, ${existing.username}!`;
+  document.getElementById('account-logout-btn').addEventListener('click', async () => {
+    try { await apiFetch('/auth/logout', { method: 'POST' }); } catch {}
+    clearAuth();
+    location.reload();
+  });
+}
+
+// Pre-select tab from URL hash
+if (location.hash === '#register') showTab('register');
+
+function showTab(tab) {
+  document.getElementById('login-form').style.display    = tab === 'login'    ? '' : 'none';
+  document.getElementById('register-form').style.display = tab === 'register' ? '' : 'none';
+  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  clearMessages();
+}
+
+function showError(msg) {
+  const el = document.getElementById('auth-error');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+function showSuccess(msg) {
+  const el = document.getElementById('auth-success');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+function clearMessages() {
+  document.getElementById('auth-error').classList.remove('show');
+  document.getElementById('auth-success').classList.remove('show');
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearMessages();
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+
+  try {
+    const res = await apiFetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('login-username').value.trim(),
+        password: document.getElementById('login-password').value,
+      }),
+    });
+    setToken(res.token);
+    setStoredUser(res.user);
+    const back = getParam('next') || 'index.html';
+    window.location.href = back;
+  } catch (err) {
+    showError(err.message || 'Login failed. Check your username and password.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+});
+
+document.getElementById('register-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearMessages();
+  const btn = document.getElementById('register-btn');
+  btn.disabled = true; btn.textContent = 'Creating account…';
+
+  try {
+    const res = await apiFetch('/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('reg-username').value.trim(),
+        email:    document.getElementById('reg-email').value.trim(),
+        password: document.getElementById('reg-password').value,
+      }),
+    });
+    setToken(res.token);
+    setStoredUser(res.user);
+    const back = getParam('next') || 'index.html';
+    window.location.href = back;
+  } catch (err) {
+    showError(err.message || 'Registration failed.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create Account';
+  }
+});
+</script>
+</body>
+</html>

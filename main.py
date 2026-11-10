@@ -3,16 +3,18 @@ import re
 import socket
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from passlib.context import CryptContext
 from pydantic import BaseModel
 
 DB_PATH = os.environ.get("DB_PATH", "ao4.db")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +69,28 @@ def init_db():
             tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
             PRIMARY KEY(fic_id, tag_id)
         );
+
+        CREATE TABLE IF NOT EXISTS users (
+            id            TEXT PRIMARY KEY,
+            username      TEXT NOT NULL UNIQUE,
+            email         TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            token      TEXT PRIMARY KEY,
+            user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
     """)
+    # Migration: add author_id to fics if the column doesn't exist yet
+    try:
+        conn.execute("ALTER TABLE fics ADD COLUMN author_id TEXT REFERENCES users(id)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     conn.close()
 
 
@@ -80,7 +103,7 @@ init_db()
 app = FastAPI(
     title="AO4",
     description="Archive of Our Four — fanfiction API",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -102,9 +125,9 @@ class ChapterIn(BaseModel):
 
 class FicIn(BaseModel):
     title: str
-    author: str
+    author: str = ""
     summary: str = ""
-    rating: str = "G"          # G  T  M  E
+    rating: str = "G"
     fandoms: List[str] = []
     characters: List[str] = []
     relationships: List[str] = []
@@ -123,6 +146,7 @@ class FicOut(BaseModel):
     id: str
     title: str
     author: str
+    author_id: Optional[str] = None
     summary: str
     rating: str
     word_count: int
@@ -142,6 +166,54 @@ class FicDetail(FicOut):
 class ChapterAddIn(BaseModel):
     title: str = ""
     content: str
+
+
+class RegisterIn(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class UserOut(BaseModel):
+    id: str
+    username: str
+    email: str
+    created_at: str
+
+
+class AuthOut(BaseModel):
+    token: str
+    user: UserOut
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+
+def _get_current_user(authorization: Optional[str] = Header(None), conn=Depends(get_db)):
+    """Returns the logged-in user dict, or None if not authenticated."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[7:]
+    now = datetime.utcnow().isoformat()
+    row = conn.execute(
+        "SELECT u.id, u.username, u.email, u.created_at FROM sessions s "
+        "JOIN users u ON u.id = s.user_id "
+        "WHERE s.token = ? AND s.expires_at > ?",
+        (token, now),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def require_user(user=Depends(_get_current_user)):
+    if not user:
+        raise HTTPException(401, "Authentication required")
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +236,7 @@ def _get_fic_tags(conn, fic_id: str, category: str) -> List[str]:
 
 def _fic_to_dict(conn, row) -> dict:
     fid = row["id"]
+    keys = row.keys()
     chapter_count = conn.execute(
         "SELECT COUNT(*) FROM chapters WHERE fic_id = ?", (fid,)
     ).fetchone()[0]
@@ -171,6 +244,7 @@ def _fic_to_dict(conn, row) -> dict:
         id=fid,
         title=row["title"],
         author=row["author"],
+        author_id=row["author_id"] if "author_id" in keys else None,
         summary=row["summary"],
         rating=row["rating"],
         word_count=row["word_count"],
@@ -213,25 +287,101 @@ def _safe_filename(title: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Routes — auth
+# ---------------------------------------------------------------------------
+
+@app.post("/auth/register", response_model=AuthOut, status_code=201, summary="Create a new account")
+def register(data: RegisterIn, conn=Depends(get_db)):
+    if len(data.username) < 2 or len(data.username) > 50:
+        raise HTTPException(400, "Username must be 2–50 characters")
+    if not re.match(r'^[a-zA-Z0-9_-]+$', data.username):
+        raise HTTPException(400, "Username may only contain letters, numbers, _ and -")
+    if len(data.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    if "@" not in data.email or "." not in data.email.split("@")[-1]:
+        raise HTTPException(400, "Invalid email address")
+
+    if conn.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(?)", (data.username,)).fetchone():
+        raise HTTPException(409, "Username already taken")
+    if conn.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", (data.email,)).fetchone():
+        raise HTTPException(409, "Email already registered")
+
+    user_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    pw_hash = pwd_context.hash(data.password)
+
+    conn.execute(
+        "INSERT INTO users(id, username, email, password_hash, created_at) VALUES(?,?,?,?,?)",
+        (user_id, data.username, data.email, pw_hash, now),
+    )
+    token = str(uuid.uuid4())
+    expires = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    conn.execute(
+        "INSERT INTO sessions(token, user_id, created_at, expires_at) VALUES(?,?,?,?)",
+        (token, user_id, now, expires),
+    )
+    return {
+        "token": token,
+        "user": {"id": user_id, "username": data.username, "email": data.email, "created_at": now},
+    }
+
+
+@app.post("/auth/login", response_model=AuthOut, summary="Log in")
+def login(data: LoginIn, conn=Depends(get_db)):
+    row = conn.execute(
+        "SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (data.username,)
+    ).fetchone()
+    if not row or not pwd_context.verify(data.password, row["password_hash"]):
+        raise HTTPException(401, "Invalid username or password")
+
+    token = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    expires = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    conn.execute(
+        "INSERT INTO sessions(token, user_id, created_at, expires_at) VALUES(?,?,?,?)",
+        (token, row["id"], now, expires),
+    )
+    return {
+        "token": token,
+        "user": {"id": row["id"], "username": row["username"], "email": row["email"], "created_at": row["created_at"]},
+    }
+
+
+@app.get("/auth/me", response_model=UserOut, summary="Get current user")
+def me(user=Depends(require_user)):
+    return user
+
+
+@app.post("/auth/logout", status_code=204, summary="Log out")
+def logout(authorization: Optional[str] = Header(None), conn=Depends(get_db)):
+    if authorization and authorization.startswith("Bearer "):
+        conn.execute("DELETE FROM sessions WHERE token = ?", (authorization[7:],))
+
+
+# ---------------------------------------------------------------------------
 # Routes — fics
 # ---------------------------------------------------------------------------
 
 @app.post("/fics", response_model=FicOut, status_code=201, summary="Upload a fic")
-def upload_fic(fic: FicIn, conn=Depends(get_db)):
-    """Upload a new fic with one or more chapters."""
+def upload_fic(fic: FicIn, conn=Depends(get_db), user=Depends(_get_current_user)):
     if not fic.chapters:
         raise HTTPException(400, "At least one chapter is required")
     if fic.rating not in ("G", "T", "M", "E"):
         raise HTTPException(400, "Rating must be G, T, M, or E")
+
+    author_id = user["id"] if user else None
+    author = user["username"] if user else fic.author.strip()
+    if not author:
+        raise HTTPException(400, "Author name is required when not logged in")
 
     fic_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
     wc = sum(_word_count(ch.content) for ch in fic.chapters)
 
     conn.execute(
-        "INSERT INTO fics(id,title,author,summary,rating,word_count,created_at,updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?)",
-        (fic_id, fic.title, fic.author, fic.summary, fic.rating, wc, now, now),
+        "INSERT INTO fics(id,title,author,author_id,summary,rating,word_count,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (fic_id, fic.title, author, author_id, fic.summary, fic.rating, wc, now, now),
     )
     for i, ch in enumerate(fic.chapters, 1):
         conn.execute(
@@ -256,7 +406,6 @@ def list_fics(
     offset: int = Query(0, ge=0),
     conn=Depends(get_db),
 ):
-    """Return a paginated list of fics, with optional search and filters."""
     sql = "SELECT DISTINCT f.* FROM fics f"
     joins: List[str] = []
     wheres: List[str] = []
@@ -305,10 +454,14 @@ def get_fic(fic_id: str, conn=Depends(get_db)):
 
 
 @app.delete("/fics/{fic_id}", status_code=204, summary="Delete a fic")
-def delete_fic(fic_id: str, conn=Depends(get_db)):
-    result = conn.execute("DELETE FROM fics WHERE id = ?", (fic_id,))
-    if result.rowcount == 0:
+def delete_fic(fic_id: str, conn=Depends(get_db), user=Depends(_get_current_user)):
+    row = conn.execute("SELECT author_id FROM fics WHERE id = ?", (fic_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Fic not found")
+    # If the fic was posted by an account, only that account can delete it
+    if row["author_id"] and (not user or user["id"] != row["author_id"]):
+        raise HTTPException(403, "You can only delete your own works")
+    conn.execute("DELETE FROM fics WHERE id = ?", (fic_id,))
 
 
 # ---------------------------------------------------------------------------
@@ -321,10 +474,12 @@ def delete_fic(fic_id: str, conn=Depends(get_db)):
     status_code=201,
     summary="Append a chapter to an existing fic",
 )
-def add_chapter(fic_id: str, chapter: ChapterAddIn, conn=Depends(get_db)):
+def add_chapter(fic_id: str, chapter: ChapterAddIn, conn=Depends(get_db), user=Depends(_get_current_user)):
     row = conn.execute("SELECT * FROM fics WHERE id = ?", (fic_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Fic not found")
+    if row["author_id"] and (not user or user["id"] != row["author_id"]):
+        raise HTTPException(403, "You can only add chapters to your own works")
 
     next_num = conn.execute(
         "SELECT COALESCE(MAX(number), 0) + 1 FROM chapters WHERE fic_id = ?", (fic_id,)
@@ -381,7 +536,6 @@ def download_fic(
     relationships = _get_fic_tags(conn, fic_id, "relationship")
     safe_name = _safe_filename(row["title"])
 
-    # ---- plain text ----
     if fmt == "txt":
         lines = [
             row["title"],
@@ -410,7 +564,6 @@ def download_fic(
             headers={"Content-Disposition": f'attachment; filename="{safe_name}.txt"'},
         )
 
-    # ---- html ----
     fandom_str = ", ".join(fandoms) or "Original"
     meta_bits = [f"by <strong>{row['author']}</strong>", fandom_str, f"Rated {row['rating']}", f"{row['word_count']:,} words"]
     if relationships:
@@ -479,28 +632,22 @@ def download_fic(
 
 
 # ---------------------------------------------------------------------------
-# Routes — tags
+# Routes — stats + tags
 # ---------------------------------------------------------------------------
-
-@app.get("/", include_in_schema=False)
-def root():
-    return {"status": "ok", "docs": "/docs"}
-
 
 @app.get("/stats", summary="Archive-wide statistics")
 def get_stats(conn=Depends(get_db)):
-    """Return aggregate counts: total fics, unique fandoms, unique authors, total words."""
     total_fics    = conn.execute("SELECT COUNT(*) FROM fics").fetchone()[0]
     total_words   = conn.execute("SELECT COALESCE(SUM(word_count), 0) FROM fics").fetchone()[0]
     total_authors = conn.execute("SELECT COUNT(DISTINCT author) FROM fics").fetchone()[0]
-    total_fandoms = conn.execute(
-        "SELECT COUNT(*) FROM tags WHERE category = 'fandom'"
-    ).fetchone()[0]
+    total_fandoms = conn.execute("SELECT COUNT(*) FROM tags WHERE category = 'fandom'").fetchone()[0]
+    total_users   = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     return {
         "fics":    total_fics,
         "words":   total_words,
         "authors": total_authors,
         "fandoms": total_fandoms,
+        "users":   total_users,
     }
 
 
@@ -525,6 +672,11 @@ def list_tags(
             "SELECT name, category FROM tags ORDER BY category, name"
         ).fetchall()
     return [{"name": r["name"], "category": r["category"]} for r in rows]
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return {"status": "ok", "docs": "/docs"}
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,10 @@
         <li><a href="upload.html">Post a Work</a></li>
       </ul>
     </div>
+    <div class="sidebar-box" id="owner-box" style="display:none;">
+      <h3>Manage</h3>
+      <button class="btn-delete" id="delete-work-btn">Delete this work</button>
+    </div>
   </aside>
 </div>
 
@@ -157,6 +161,7 @@ async function loadWork() {
     if (ch >= 1 && ch <= work.chapters.length) chapterIndex = ch - 1;
 
     renderWork();
+    maybeShowOwnerControls();
   } catch (e) {
     if (e.message.includes('404')) {
       document.getElementById('work-area').innerHTML =
@@ -166,6 +171,24 @@ async function loadWork() {
         `<div class="error-msg">Could not load work. Backend unreachable at <strong>${getApiUrl()}</strong>.<br>Click ⚙ API to configure.</div>`;
       showApiBanner(`⚠ Backend unreachable at ${getApiUrl()} — click ⚙ API to configure.`, 'error');
     }
+  }
+}
+
+// Show delete button if logged-in user owns this work
+async function maybeShowOwnerControls() {
+  const user = getStoredUser();
+  if (!user || !work) return;
+  if (work.author_id === user.id) {
+    document.getElementById('owner-box').style.display = '';
+    document.getElementById('delete-work-btn').addEventListener('click', async () => {
+      if (!confirm(`Delete "${work.title}"? This cannot be undone.`)) return;
+      try {
+        await apiFetch(`/fics/${encodeURIComponent(work.id)}`, { method: 'DELETE' });
+        window.location.href = 'browse.html';
+      } catch (err) {
+        alert('Delete failed: ' + err.message);
+      }
+    });
   }
 }
 

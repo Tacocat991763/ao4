@@ -30,7 +30,8 @@
 
         <div class="field">
           <label>Author / Pen Name <span class="required">*</span></label>
-          <input type="text" id="f-author" placeholder="Your name or pseudonym" required>
+          <input type="text" id="f-author" placeholder="Your name or pseudonym">
+          <div class="hint" id="author-hint" style="display:none;">Posting as your account username. <a href="login.html">Switch accounts</a></div>
         </div>
 
         <div class="field">
@@ -119,6 +120,21 @@
 <script src="app.js"></script>
 <script>
 injectShell('upload');
+
+// Pre-fill author from account if logged in
+(function() {
+  const user = getStoredUser();
+  const authorInput = document.getElementById('f-author');
+  if (user) {
+    authorInput.value = user.username;
+    authorInput.readOnly = true;
+    authorInput.style.background = 'var(--bg-alt)';
+    authorInput.removeAttribute('required');
+    document.getElementById('author-hint').style.display = '';
+  } else {
+    authorInput.required = true;
+  }
+})();
 
 let chapterCount = 1;
 

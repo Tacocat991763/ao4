@@ -11,12 +11,38 @@ function setApiUrl(url) {
   try { localStorage.setItem('ao4_api', url.replace(/\/$/, '')); } catch {}
 }
 
+// ---- Auth helpers ----
+
+function getToken() {
+  try { return localStorage.getItem('ao4_token') || ''; } catch { return ''; }
+}
+
+function setToken(t) {
+  try { localStorage.setItem('ao4_token', t); } catch {}
+}
+
+function getStoredUser() {
+  try { return JSON.parse(localStorage.getItem('ao4_user') || 'null'); } catch { return null; }
+}
+
+function setStoredUser(u) {
+  try { localStorage.setItem('ao4_user', JSON.stringify(u)); } catch {}
+}
+
+function clearAuth() {
+  try { localStorage.removeItem('ao4_token'); localStorage.removeItem('ao4_user'); } catch {}
+}
+
 async function apiFetch(path, opts = {}) {
-  const r = await fetch(getApiUrl() + path, opts);
+  const token = getToken();
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(getApiUrl() + path, { ...opts, headers });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
     throw new Error(e.detail || `HTTP ${r.status}`);
   }
+  if (r.status === 204) return null;
   return r.json();
 }
 
@@ -88,7 +114,6 @@ function buildWorkCard(w) {
   </li>`;
 }
 
-// Render plain-text chapter content to HTML paragraphs
 function renderContent(text) {
   if (!text) return '<p><em>(empty)</em></p>';
   return text
@@ -113,6 +138,7 @@ const HEADER_HTML = (activePage) => `
         <input type="text" name="q" placeholder="Search works, authors, tags…">
         <button type="submit">Search</button>
       </form>
+      <div id="header-user" class="header-user"></div>
       <button class="btn-api-settings" id="api-settings-btn" title="Configure backend URL">⚙ API</button>
     </div>
   </div>
@@ -139,8 +165,9 @@ const FOOTER_HTML = `
     <a href="index.html">Home</a>
     <a href="browse.html">Browse</a>
     <a href="upload.html">Upload</a>
+    <a href="login.html">Account</a>
   </nav>
-  <div class="footer-credit">AO4 v0.1 · Open source fanfiction archive</div>
+  <div class="footer-credit">AO4 v0.2 · Open source fanfiction archive</div>
 </footer>
 `;
 
@@ -161,6 +188,23 @@ const MODAL_HTML = `
 </div>
 `;
 
+function updateHeaderUser() {
+  const user = getStoredUser();
+  const el = document.getElementById('header-user');
+  if (!el) return;
+  if (user) {
+    el.innerHTML = `<a href="login.html" class="header-username">${esc(user.username)}</a><a href="#" id="logout-link" class="header-logout">Log out</a>`;
+    document.getElementById('logout-link')?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await apiFetch('/auth/logout', { method: 'POST' }); } catch {}
+      clearAuth();
+      window.location.href = 'login.html';
+    });
+  } else {
+    el.innerHTML = `<a href="login.html" class="header-login">Log in</a>`;
+  }
+}
+
 function injectShell(activePage) {
   const header = document.getElementById('shell-header');
   const footer = document.getElementById('shell-footer');
@@ -168,6 +212,8 @@ function injectShell(activePage) {
   if (header) header.innerHTML = HEADER_HTML(activePage);
   if (footer) footer.innerHTML = FOOTER_HTML;
   if (modal)  modal.innerHTML  = MODAL_HTML;
+
+  updateHeaderUser();
 
   // Wire API modal
   document.getElementById('api-settings-btn')?.addEventListener('click', () => {
