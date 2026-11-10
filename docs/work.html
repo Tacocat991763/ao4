@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loading… — AO4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="shell-header"></div>
+
+<div id="main">
+  <div id="content">
+    <div id="work-area"><div class="loading">Loading work…</div></div>
+  </div>
+  <aside id="sidebar">
+    <div class="sidebar-box" id="work-sidebar"></div>
+    <div class="sidebar-box">
+      <h3>Quick Links</h3>
+      <ul>
+        <li><a href="browse.html">← All Works</a></li>
+        <li><a href="upload.html">Post a Work</a></li>
+      </ul>
+    </div>
+  </aside>
+</div>
+
+<div id="shell-footer"></div>
+<div id="shell-modal"></div>
+
+<script src="app.js"></script>
+<script>
+injectShell('');
+
+let work = null;
+let chapterIndex = 0;
+
+function renderWork() {
+  if (!work) return;
+
+  const w = work;
+  const ch = w.chapters[chapterIndex];
+  const total = w.chapters.length;
+
+  // Update page title
+  document.title = `${w.title} — AO4`;
+
+  const fandoms  = (w.fandoms        || []).map(f => `<a href="browse.html?fandom=${encodeURIComponent(f)}" class="tag fandom">${esc(f)}</a>`).join(' ');
+  const ships    = (w.relationships  || []).map(t => tagLink(t, 'relationship', 'q')).join(' ');
+  const chars    = (w.characters     || []).map(t => tagLink(t, 'character',    'q')).join(' ');
+  const extras   = (w.tags           || []).map(t => tagLink(t, 'freeform',     'q')).join(' ');
+
+  const metaRows = [
+    ['Rating',         ratingBadge(w.rating) + ' ' + ({G:'General Audiences',T:'Teen & Up',M:'Mature',E:'Explicit'}[w.rating]||w.rating)],
+    ['Fandoms',        fandoms || '<em>None listed</em>'],
+    w.relationships?.length ? ['Relationships', ships] : null,
+    w.characters?.length    ? ['Characters',    chars] : null,
+    w.tags?.length          ? ['Additional Tags', extras] : null,
+    ['Language',       'English'],
+    ['Words',          fmt(w.word_count)],
+    ['Chapters',       `${total}/${total}`],
+    ['Published',      fmtDate(w.created_at)],
+    w.updated_at !== w.created_at ? ['Updated', fmtDate(w.updated_at)] : null,
+  ].filter(Boolean);
+
+  const metaDl = metaRows.map(([dt, dd]) => `<dt>${esc(dt)}</dt><dd>${dd}</dd>`).join('');
+
+  // Chapter nav
+  const chapterNav = total > 1 ? `
+    <div class="chapter-nav-bar">
+      <strong>Chapter ${chapterIndex + 1} of ${total}</strong>
+      ${total > 1 ? `
+        <select id="ch-select">
+          ${w.chapters.map((c, i) => `<option value="${i}" ${i===chapterIndex?'selected':''}>${i+1}. ${esc(c.title || 'Chapter ' + (i+1))}</option>`).join('')}
+        </select>` : ''}
+      <button class="btn-nav" id="btn-prev" ${chapterIndex === 0 ? 'disabled' : ''}>← Previous</button>
+      <button class="btn-nav" id="btn-next" ${chapterIndex === total - 1 ? 'disabled' : ''}>Next →</button>
+    </div>` : '';
+
+  const chTitle = (total > 1 || ch.title)
+    ? `<div class="chapter-title-line">${total > 1 ? `Chapter ${chapterIndex + 1}: ` : ''}${esc(ch.title || (total > 1 ? 'Untitled' : ''))}</div>`
+    : '';
+
+  const downloadBase = `${getApiUrl()}/fics/${w.id}/download`;
+
+  document.getElementById('work-area').innerHTML = `
+    <div class="work-header-block">
+      <h1>${esc(w.title)}</h1>
+      <div class="byline">by <a href="browse.html?q=${encodeURIComponent(w.author)}">${esc(w.author)}</a></div>
+      <div class="work-meta-table">
+        <dl>${metaDl}</dl>
+      </div>
+      ${w.summary ? `<div class="work-summary-box">${esc(w.summary)}</div>` : ''}
+    </div>
+
+    ${chapterNav}
+    ${chTitle}
+    <div class="chapter-body" id="chapter-body">
+      ${renderContent(ch.content)}
+    </div>
+    ${total > 1 ? chapterNav.replace('chapter-nav-bar', 'chapter-nav-bar').replace('id="ch-select"','id="ch-select-b"').replace('id="btn-prev"','id="btn-prev-b"').replace('id="btn-next"','id="btn-next-b"') : ''}
+
+    <div class="download-bar">
+      <span>Download this work:</span>
+      <a href="${downloadBase}?format=txt" download>Plain Text (.txt)</a>
+      <a href="${downloadBase}?format=html" download>Styled HTML (.html)</a>
+    </div>
+  `;
+
+  // Wire chapter navigation
+  function goTo(i) {
+    if (i < 0 || i >= total) return;
+    chapterIndex = i;
+    renderWork();
+    window.scrollTo(0, 0);
+  }
+
+  document.getElementById('btn-prev')?.addEventListener('click', () => goTo(chapterIndex - 1));
+  document.getElementById('btn-next')?.addEventListener('click', () => goTo(chapterIndex + 1));
+  document.getElementById('ch-select')?.addEventListener('change', e => goTo(parseInt(e.target.value)));
+  document.getElementById('btn-prev-b')?.addEventListener('click', () => goTo(chapterIndex - 1));
+  document.getElementById('btn-next-b')?.addEventListener('click', () => goTo(chapterIndex + 1));
+  document.getElementById('ch-select-b')?.addEventListener('change', e => goTo(parseInt(e.target.value)));
+
+  // Sidebar
+  document.getElementById('work-sidebar').innerHTML = `
+    <h3>Work Info</h3>
+    <ul>
+      <li>Rating: ${ratingBadge(w.rating)} ${esc(w.rating)}</li>
+      <li>Words: ${fmt(w.word_count)}</li>
+      <li>Chapters: ${total}</li>
+      <li>Posted: ${fmtDate(w.created_at)}</li>
+      ${w.updated_at !== w.created_at ? `<li>Updated: ${fmtDate(w.updated_at)}</li>` : ''}
+    </ul>
+    <div style="margin-top:0.5rem;">
+      <a href="${downloadBase}?format=txt" download style="font-size:0.78rem;">↓ Download .txt</a><br>
+      <a href="${downloadBase}?format=html" download style="font-size:0.78rem;margin-top:0.2rem;display:inline-block;">↓ Download .html</a>
+    </div>
+  `;
+}
+
+async function loadWork() {
+  const id = getParam('id');
+  if (!id) {
+    document.getElementById('work-area').innerHTML =
+      '<div class="error-msg">No work ID specified. <a href="browse.html">Browse works</a></div>';
+    return;
+  }
+
+  try {
+    work = await apiFetch(`/fics/${encodeURIComponent(id)}`);
+    hideApiBanner();
+
+    // Start at chapter from URL param if given
+    const ch = parseInt(getParam('chapter'));
+    if (ch >= 1 && ch <= work.chapters.length) chapterIndex = ch - 1;
+
+    renderWork();
+  } catch (e) {
+    if (e.message.includes('404')) {
+      document.getElementById('work-area').innerHTML =
+        '<div class="error-msg">Work not found. It may have been deleted. <a href="browse.html">Browse works</a></div>';
+    } else {
+      document.getElementById('work-area').innerHTML =
+        `<div class="error-msg">Could not load work. Backend unreachable at <strong>${getApiUrl()}</strong>.<br>Click ⚙ API to configure.</div>`;
+      showApiBanner(`⚠ Backend unreachable at ${getApiUrl()} — click ⚙ API to configure.`, 'error');
+    }
+  }
+}
+
+loadWork();
+</script>
+</body>
+</html>

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Post a Work — AO4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="shell-header"></div>
+
+<div id="main" class="full-width">
+  <div id="content" style="max-width:800px;margin:0 auto;">
+
+    <div id="upload-success" class="upload-success">
+      Work posted! <a id="success-link" href="#">View it here →</a>
+    </div>
+    <div id="upload-error" class="upload-error"></div>
+
+    <form id="upload-form" autocomplete="off">
+
+      <div class="form-block">
+        <h2>Basic Info</h2>
+
+        <div class="field">
+          <label>Title <span class="required">*</span></label>
+          <input type="text" id="f-title" placeholder="Your work's title" required>
+        </div>
+
+        <div class="field">
+          <label>Author / Pen Name <span class="required">*</span></label>
+          <input type="text" id="f-author" placeholder="Your name or pseudonym" required>
+        </div>
+
+        <div class="field">
+          <label>Rating <span class="required">*</span></label>
+          <select id="f-rating" required>
+            <option value="">— Choose a rating —</option>
+            <option value="G">G — General Audiences</option>
+            <option value="T">T — Teen &amp; Up Audiences</option>
+            <option value="M">M — Mature</option>
+            <option value="E">E — Explicit</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Summary</label>
+          <textarea id="f-summary" placeholder="A brief description of your work. HTML not supported."></textarea>
+          <div class="hint">Shown in search results and work listings.</div>
+        </div>
+      </div>
+
+      <div class="form-block">
+        <h2>Tags</h2>
+
+        <div class="field">
+          <label>Fandoms</label>
+          <input type="text" id="f-fandoms" placeholder="e.g. Harry Potter, Doctor Who">
+          <div class="hint">Comma-separated. Use the canonical fandom name if you know it.</div>
+        </div>
+
+        <div class="field">
+          <label>Relationships</label>
+          <input type="text" id="f-relationships" placeholder="e.g. Harry Potter/Ginny Weasley, Kirk &amp; Spock">
+          <div class="hint">Comma-separated. Use / for romantic, &amp; for platonic.</div>
+        </div>
+
+        <div class="field">
+          <label>Characters</label>
+          <input type="text" id="f-characters" placeholder="e.g. Hermione Granger, Ron Weasley">
+          <div class="hint">Comma-separated.</div>
+        </div>
+
+        <div class="field">
+          <label>Additional Tags</label>
+          <input type="text" id="f-tags" placeholder="e.g. Hurt/Comfort, Slow Burn, Happy Ending">
+          <div class="hint">Comma-separated. Tropes, content notes, whatever you want readers to know.</div>
+        </div>
+      </div>
+
+      <div class="form-block">
+        <h2>Chapters</h2>
+        <div class="hint" style="margin-bottom:1rem;">
+          Add one chapter for a one-shot, or multiple for a multi-chapter work.
+        </div>
+
+        <div id="chapters-container">
+          <div class="chapter-entry" data-ch="0">
+            <h4>
+              <span>Chapter 1</span>
+            </h4>
+            <div class="field">
+              <label>Chapter Title <span style="color:#aaa;font-weight:normal;">(optional)</span></label>
+              <input type="text" class="ch-title" placeholder="Leave blank for a single-chapter work">
+            </div>
+            <div class="field">
+              <label>Content <span class="required">*</span></label>
+              <textarea class="ch-content large" placeholder="Paste or type your chapter here. Use blank lines to separate paragraphs."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" class="btn-add-chapter" id="add-chapter-btn">+ Add Another Chapter</button>
+      </div>
+
+      <div class="form-block" style="text-align:right;border-top:3px solid var(--red);">
+        <button type="submit" class="btn-submit" id="submit-btn">Post Work</button>
+      </div>
+
+    </form>
+
+  </div>
+</div>
+
+<div id="shell-footer"></div>
+<div id="shell-modal"></div>
+
+<script src="app.js"></script>
+<script>
+injectShell('upload');
+
+let chapterCount = 1;
+
+document.getElementById('add-chapter-btn').addEventListener('click', () => {
+  chapterCount++;
+  const container = document.getElementById('chapters-container');
+  const div = document.createElement('div');
+  div.className = 'chapter-entry';
+  div.dataset.ch = chapterCount - 1;
+  div.innerHTML = `
+    <h4>
+      <span>Chapter ${chapterCount}</span>
+      <button type="button" class="btn-remove-ch">Remove</button>
+    </h4>
+    <div class="field">
+      <label>Chapter Title <span style="color:#aaa;font-weight:normal;">(optional)</span></label>
+      <input type="text" class="ch-title" placeholder="e.g. Chapter ${chapterCount}: The Beginning">
+    </div>
+    <div class="field">
+      <label>Content <span style="color:#990000;">*</span></label>
+      <textarea class="ch-content large" placeholder="Paste or type your chapter here."></textarea>
+    </div>
+  `;
+  div.querySelector('.btn-remove-ch').addEventListener('click', () => {
+    div.remove();
+    renumberChapters();
+  });
+  container.appendChild(div);
+});
+
+function renumberChapters() {
+  document.querySelectorAll('.chapter-entry').forEach((el, i) => {
+    el.querySelector('h4 span').textContent = `Chapter ${i + 1}`;
+  });
+  chapterCount = document.querySelectorAll('.chapter-entry').length;
+}
+
+function splitTags(str) {
+  return str.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+document.getElementById('upload-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const title   = document.getElementById('f-title').value.trim();
+  const author  = document.getElementById('f-author').value.trim();
+  const rating  = document.getElementById('f-rating').value;
+  const summary = document.getElementById('f-summary').value.trim();
+
+  if (!title || !author || !rating) {
+    showError('Please fill in Title, Author, and Rating.');
+    return;
+  }
+
+  const chapters = [];
+  for (const el of document.querySelectorAll('.chapter-entry')) {
+    const title = el.querySelector('.ch-title').value.trim();
+    const content = el.querySelector('.ch-content').value.trim();
+    if (!content) {
+      showError('Each chapter must have content. Remove empty chapters first.');
+      return;
+    }
+    chapters.push({ title, content });
+  }
+
+  if (!chapters.length) {
+    showError('Add at least one chapter with content.');
+    return;
+  }
+
+  const payload = {
+    title,
+    author,
+    rating,
+    summary,
+    fandoms:       splitTags(document.getElementById('f-fandoms').value),
+    relationships: splitTags(document.getElementById('f-relationships').value),
+    characters:    splitTags(document.getElementById('f-characters').value),
+    tags:          splitTags(document.getElementById('f-tags').value),
+    chapters,
+  };
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Posting…';
+  hideMessages();
+
+  try {
+    const result = await apiFetch('/fics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const successEl = document.getElementById('upload-success');
+    const link = document.getElementById('success-link');
+    link.href = `work.html?id=${result.id}`;
+    successEl.classList.add('show');
+    successEl.scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('upload-form').reset();
+    // Reset chapters to one
+    document.getElementById('chapters-container').innerHTML = `
+      <div class="chapter-entry" data-ch="0">
+        <h4><span>Chapter 1</span></h4>
+        <div class="field">
+          <label>Chapter Title <span style="color:#aaa;font-weight:normal;">(optional)</span></label>
+          <input type="text" class="ch-title" placeholder="Leave blank for a single-chapter work">
+        </div>
+        <div class="field">
+          <label>Content <span class="required">*</span></label>
+          <textarea class="ch-content large" placeholder="Paste or type your chapter here."></textarea>
+        </div>
+      </div>`;
+    chapterCount = 1;
+  } catch (err) {
+    showError(`Failed to post: ${err.message}. Is the backend running at ${getApiUrl()}?`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Post Work';
+  }
+});
+
+function showError(msg) {
+  const el = document.getElementById('upload-error');
+  el.textContent = msg;
+  el.classList.add('show');
+  el.scrollIntoView({ behavior: 'smooth' });
+}
+
+function hideMessages() {
+  document.getElementById('upload-success').classList.remove('show');
+  document.getElementById('upload-error').classList.remove('show');
+}
+</script>
+</body>
+</html>

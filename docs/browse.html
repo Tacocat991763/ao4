@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browse Works — AO4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="shell-header"></div>
+
+<div id="main">
+  <div id="content">
+
+    <div class="search-module">
+      <div class="field-inline">
+        <label>Search</label>
+        <input type="text" id="q-input" placeholder="Title, author, or tag…">
+      </div>
+      <div class="field-inline">
+        <label>Fandom</label>
+        <input type="text" id="fandom-input" placeholder="Any fandom">
+      </div>
+      <div class="field-inline">
+        <label>Rating</label>
+        <select id="rating-select">
+          <option value="">Any</option>
+          <option value="G">G — General Audiences</option>
+          <option value="T">T — Teen &amp; Up</option>
+          <option value="M">M — Mature</option>
+          <option value="E">E — Explicit</option>
+        </select>
+      </div>
+      <button id="search-btn">Search</button>
+    </div>
+
+    <div id="results-header" class="results-header" style="display:none">
+      <span id="results-count"></span>
+      <span id="results-range"></span>
+    </div>
+
+    <div id="results"><div class="loading">Loading…</div></div>
+
+    <div id="pagination" class="pagination"></div>
+
+  </div>
+
+  <aside id="sidebar">
+
+    <div class="sidebar-box" id="fandom-box">
+      <h3>Fandoms</h3>
+      <div class="loading" style="padding:0.4rem;font-size:0.8rem;">Loading…</div>
+    </div>
+
+    <div class="sidebar-box">
+      <h3>Ratings</h3>
+      <ul>
+        <li><a href="browse.html?rating=G">G — General Audiences</a></li>
+        <li><a href="browse.html?rating=T">T — Teen &amp; Up</a></li>
+        <li><a href="browse.html?rating=M">M — Mature</a></li>
+        <li><a href="browse.html?rating=E">E — Explicit</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-box">
+      <h3>Sort / Filter Tips</h3>
+      <ul style="font-size:0.78rem;color:#888;">
+        <li style="padding:0.15rem 0;">Search by title or author name</li>
+        <li style="padding:0.15rem 0;">Filter by fandom name</li>
+        <li style="padding:0.15rem 0;">Click any tag to filter</li>
+        <li style="padding:0.15rem 0;">Click an author to see their works</li>
+      </ul>
+    </div>
+
+  </aside>
+</div>
+
+<div id="shell-footer"></div>
+<div id="shell-modal"></div>
+
+<script src="app.js"></script>
+<script>
+injectShell('browse');
+
+const PER_PAGE = 20;
+let currentPage = 1;
+let totalWorks   = 0;
+
+function getFilters() {
+  return {
+    q:      document.getElementById('q-input').value.trim(),
+    fandom: document.getElementById('fandom-input').value.trim(),
+    rating: document.getElementById('rating-select').value,
+  };
+}
+
+function buildUrl(page, filters) {
+  const p = new URLSearchParams();
+  if (filters.q)      p.set('q',      filters.q);
+  if (filters.fandom) p.set('fandom', filters.fandom);
+  if (filters.rating) p.set('rating', filters.rating);
+  if (page > 1)       p.set('page',   page);
+  return 'browse.html?' + p.toString();
+}
+
+function renderPagination(page, total) {
+  const pages = Math.ceil(total / PER_PAGE) || 1;
+  const f = getFilters();
+  if (pages <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
+
+  let html = '';
+  if (page > 1) html += `<a href="${buildUrl(page - 1, f)}">← Prev</a>`;
+  else          html += `<span class="disabled">← Prev</span>`;
+
+  const start = Math.max(1, page - 2);
+  const end   = Math.min(pages, page + 2);
+  if (start > 1) html += `<a href="${buildUrl(1, f)}">1</a>`;
+  if (start > 2) html += `<span>…</span>`;
+
+  for (let i = start; i <= end; i++) {
+    if (i === page) html += `<span class="current">${i}</span>`;
+    else            html += `<a href="${buildUrl(i, f)}">${i}</a>`;
+  }
+
+  if (end < pages - 1) html += `<span>…</span>`;
+  if (end < pages)     html += `<a href="${buildUrl(pages, f)}">${pages}</a>`;
+
+  if (page < pages) html += `<a href="${buildUrl(page + 1, f)}">Next →</a>`;
+  else              html += `<span class="disabled">Next →</span>`;
+
+  document.getElementById('pagination').innerHTML = html;
+}
+
+async function search(page) {
+  currentPage = page || 1;
+  const f = getFilters();
+  const offset = (currentPage - 1) * PER_PAGE;
+
+  const params = new URLSearchParams({ limit: PER_PAGE, offset });
+  if (f.q)      params.set('q',      f.q);
+  if (f.fandom) params.set('fandom', f.fandom);
+  if (f.rating) params.set('rating', f.rating);
+
+  document.getElementById('results').innerHTML = '<div class="loading">Loading…</div>';
+
+  try {
+    const works = await apiFetch('/fics?' + params);
+    hideApiBanner();
+
+    if (!works.length) {
+      document.getElementById('results').innerHTML = '<div class="empty">No works found. Try a different search.</div>';
+      document.getElementById('results-header').style.display = 'none';
+      document.getElementById('pagination').innerHTML = '';
+      return;
+    }
+
+    // Approximate total by checking if we got a full page
+    if (works.length === PER_PAGE) {
+      // Get a rough total (fetch with big limit just counting)
+      try {
+        const all = await apiFetch('/fics?limit=1000&' + (f.q ? `q=${encodeURIComponent(f.q)}&` : '') +
+          (f.fandom ? `fandom=${encodeURIComponent(f.fandom)}&` : '') +
+          (f.rating ? `rating=${encodeURIComponent(f.rating)}` : ''));
+        totalWorks = all.length;
+      } catch { totalWorks = offset + works.length; }
+    } else {
+      totalWorks = offset + works.length;
+    }
+
+    const hdr = document.getElementById('results-header');
+    hdr.style.display = 'flex';
+    document.getElementById('results-count').textContent =
+      `${fmt(totalWorks)} work${totalWorks !== 1 ? 's' : ''} found`;
+    document.getElementById('results-range').textContent =
+      `Showing ${offset + 1}–${offset + works.length}`;
+
+    document.getElementById('results').innerHTML =
+      `<ol class="work-listing">${works.map(buildWorkCard).join('')}</ol>`;
+
+    renderPagination(currentPage, totalWorks);
+
+  } catch (e) {
+    document.getElementById('results').innerHTML =
+      `<div class="error-msg">Could not reach backend at <strong>${getApiUrl()}</strong>.<br>Click ⚙ API to configure.</div>`;
+    showApiBanner(`⚠ Backend unreachable at ${getApiUrl()} — click ⚙ API to configure.`, 'error');
+  }
+}
+
+async function loadFandomSidebar() {
+  try {
+    const tags = await apiFetch('/tags?category=fandom');
+    const fandoms = tags.map(t => t.name).slice(0, 20);
+    document.getElementById('fandom-box').innerHTML = `
+      <h3>Fandoms</h3>
+      ${fandoms.length
+        ? `<ul>${fandoms.map(f => `<li><a href="browse.html?fandom=${encodeURIComponent(f)}">${esc(f)}</a></li>`).join('')}</ul>`
+        : '<div class="empty" style="padding:0.4rem;font-size:0.8rem;">No fandoms yet</div>'}
+    `;
+  } catch {}
+}
+
+// Init from URL params
+function initFromUrl() {
+  const q      = getParam('q');
+  const fandom = getParam('fandom');
+  const rating = getParam('rating');
+  const page   = parseInt(getParam('page')) || 1;
+
+  if (q)      document.getElementById('q-input').value      = q;
+  if (fandom) document.getElementById('fandom-input').value  = fandom;
+  if (rating) document.getElementById('rating-select').value = rating;
+
+  document.getElementById('search-btn').addEventListener('click', () => {
+    history.replaceState(null, '', buildUrl(1, getFilters()));
+    search(1);
+  });
+
+  // Also search on enter in text inputs
+  ['q-input', 'fandom-input'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') { history.replaceState(null, '', buildUrl(1, getFilters())); search(1); }
+    });
+  });
+
+  search(page);
+  loadFandomSidebar();
+}
+
+initFromUrl();
+</script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AO4 — Archive of Our Four</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="shell-header"></div>
+
+<div id="main">
+  <div id="content">
+
+    <div class="module module-welcome">
+      <h2 style="border-bottom:none;margin-bottom:0.4rem;">Welcome to AO4</h2>
+      <p style="margin:0;font-size:0.9rem;color:#555;line-height:1.65;">
+        Archive of Our Four is a fan-created, fan-run fanfiction archive open to all fandoms.
+        Browse thousands of works, upload your own stories, and keep the tradition of fan creativity alive.
+      </p>
+    </div>
+
+    <div class="module">
+      <h2>Recent Works</h2>
+      <div id="recent-works"><div class="loading">Loading…</div></div>
+      <div style="text-align:right;margin-top:0.5rem;font-size:0.82rem;">
+        <a href="browse.html">Browse all works →</a>
+      </div>
+    </div>
+
+  </div>
+
+  <aside id="sidebar">
+
+    <div class="sidebar-box">
+      <h3>Archive Stats</h3>
+      <div class="stats-grid">
+        <div class="stat-item"><span class="stat-num" id="stat-works">—</span><span class="stat-label">Works</span></div>
+        <div class="stat-item"><span class="stat-num" id="stat-fandoms">—</span><span class="stat-label">Fandoms</span></div>
+        <div class="stat-item"><span class="stat-num" id="stat-words">—</span><span class="stat-label">Words</span></div>
+        <div class="stat-item"><span class="stat-num" id="stat-authors">—</span><span class="stat-label">Authors</span></div>
+      </div>
+    </div>
+
+    <div class="sidebar-box" id="fandom-box">
+      <h3>Fandoms</h3>
+      <div class="loading" style="padding:0.5rem;font-size:0.8rem;">Loading…</div>
+    </div>
+
+    <div class="sidebar-box">
+      <h3>Browse by Rating</h3>
+      <ul>
+        <li><a href="browse.html?rating=G">⬤ General Audiences</a></li>
+        <li><a href="browse.html?rating=T">⬤ Teen &amp; Up</a></li>
+        <li><a href="browse.html?rating=M">⬤ Mature</a></li>
+        <li><a href="browse.html?rating=E">⬤ Explicit</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-box">
+      <h3>Quick Links</h3>
+      <ul>
+        <li><a href="upload.html">Post a Work</a></li>
+        <li><a href="browse.html">All Works</a></li>
+        <li><a href="index.html#about">About AO4</a></li>
+      </ul>
+    </div>
+
+  </aside>
+</div>
+
+<div id="about" style="max-width:1200px;margin:0 auto 1rem;padding:0 1rem;">
+  <div class="module">
+    <h2>About AO4</h2>
+    <p style="font-size:0.9rem;line-height:1.7;margin:0 0 0.5rem;">
+      AO4 (Archive of Our Four) is an independent, fan-run, non-profit fanfiction archive.
+      It is open to fanworks of all kinds — fic, poetry, scripts — across all fandoms and ratings.
+    </p>
+    <p style="font-size:0.9rem;line-height:1.7;margin:0;">
+      Works can be uploaded using the form or via the <a href="https://github.com/Tacocat991763/ao4">open-source API</a>.
+      Downloaded works come in plain text or styled HTML format.
+    </p>
+  </div>
+</div>
+
+<div id="shell-footer"></div>
+<div id="shell-modal"></div>
+
+<script src="app.js"></script>
+<script>
+injectShell('home');
+
+async function load() {
+  try {
+    const works = await apiFetch('/fics?limit=10');
+    const el = document.getElementById('recent-works');
+    if (!works.length) {
+      el.innerHTML = '<div class="empty">No works yet — <a href="upload.html">be the first to upload!</a></div>';
+    } else {
+      el.innerHTML = `<ol class="work-listing">${works.map(buildWorkCard).join('')}</ol>`;
+    }
+    hideApiBanner();
+
+    // Stats and fandoms from a larger fetch
+    const all = await apiFetch('/fics?limit=1000');
+    const tags = await apiFetch('/tags');
+
+    const fandomSet = new Set(tags.filter(t => t.category === 'fandom').map(t => t.name));
+    const authorSet = new Set(all.map(w => w.author));
+    const totalWords = all.reduce((s, w) => s + (w.word_count || 0), 0);
+
+    document.getElementById('stat-works').textContent   = fmt(all.length);
+    document.getElementById('stat-fandoms').textContent = fmt(fandomSet.size);
+    document.getElementById('stat-authors').textContent = fmt(authorSet.size);
+    document.getElementById('stat-words').textContent   =
+      totalWords >= 1_000_000 ? (totalWords / 1_000_000).toFixed(1) + 'M' : fmt(totalWords);
+
+    const fandomList = [...fandomSet].slice(0, 15);
+    document.getElementById('fandom-box').innerHTML = `
+      <h3>Fandoms</h3>
+      ${fandomList.length
+        ? `<ul>${fandomList.map(f =>
+            `<li><a href="browse.html?fandom=${encodeURIComponent(f)}">${esc(f)}</a></li>`).join('')}</ul>`
+        : '<div class="empty" style="padding:0.4rem;font-size:0.8rem;">No fandoms yet</div>'}
+      ${fandomSet.size > 15 ? `<div style="font-size:0.75rem;margin-top:0.4rem;text-align:right;"><a href="browse.html">All fandoms →</a></div>` : ''}
+    `;
+  } catch (e) {
+    document.getElementById('recent-works').innerHTML =
+      `<div class="error-msg">Could not reach backend at <strong>${getApiUrl()}</strong>.<br>Click ⚙ API in the header to set your server address.</div>`;
+    document.getElementById('fandom-box').innerHTML = '<h3>Fandoms</h3><div class="empty" style="padding:0.4rem;font-size:0.8rem;">Unavailable</div>';
+    showApiBanner(`⚠ Backend unreachable at ${getApiUrl()} — click ⚙ API to configure.`, 'error');
+  }
+}
+
+load();
+</script>
+</body>
+</html>
