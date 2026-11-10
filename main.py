@@ -252,7 +252,7 @@ def list_fics(
     q: Optional[str] = Query(None, description="Search title or author"),
     fandom: Optional[str] = Query(None, description="Filter by fandom (partial match)"),
     rating: Optional[str] = Query(None, description="Filter by rating: G T M E"),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     conn=Depends(get_db),
 ):
@@ -485,6 +485,23 @@ def download_fic(
 @app.get("/", include_in_schema=False)
 def root():
     return {"status": "ok", "docs": "/docs"}
+
+
+@app.get("/stats", summary="Archive-wide statistics")
+def get_stats(conn=Depends(get_db)):
+    """Return aggregate counts: total fics, unique fandoms, unique authors, total words."""
+    total_fics    = conn.execute("SELECT COUNT(*) FROM fics").fetchone()[0]
+    total_words   = conn.execute("SELECT COALESCE(SUM(word_count), 0) FROM fics").fetchone()[0]
+    total_authors = conn.execute("SELECT COUNT(DISTINCT author) FROM fics").fetchone()[0]
+    total_fandoms = conn.execute(
+        "SELECT COUNT(*) FROM tags WHERE category = 'fandom'"
+    ).fetchone()[0]
+    return {
+        "fics":    total_fics,
+        "words":   total_words,
+        "authors": total_authors,
+        "fandoms": total_fandoms,
+    }
 
 
 @app.get("/tags", summary="List all tags (useful for autocomplete)")

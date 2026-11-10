@@ -102,28 +102,27 @@ async function load() {
     }
     hideApiBanner();
 
-    // Stats and fandoms from a larger fetch
-    const all = await apiFetch('/fics?limit=1000');
-    const tags = await apiFetch('/tags');
+    // Stats via dedicated endpoint; fandom list via /tags
+    const [stats, tags] = await Promise.all([
+      apiFetch('/stats'),
+      apiFetch('/tags?category=fandom'),
+    ]);
 
-    const fandomSet = new Set(tags.filter(t => t.category === 'fandom').map(t => t.name));
-    const authorSet = new Set(all.map(w => w.author));
-    const totalWords = all.reduce((s, w) => s + (w.word_count || 0), 0);
-
-    document.getElementById('stat-works').textContent   = fmt(all.length);
-    document.getElementById('stat-fandoms').textContent = fmt(fandomSet.size);
-    document.getElementById('stat-authors').textContent = fmt(authorSet.size);
+    const totalWords = stats.words || 0;
+    document.getElementById('stat-works').textContent   = fmt(stats.fics);
+    document.getElementById('stat-fandoms').textContent = fmt(stats.fandoms);
+    document.getElementById('stat-authors').textContent = fmt(stats.authors);
     document.getElementById('stat-words').textContent   =
       totalWords >= 1_000_000 ? (totalWords / 1_000_000).toFixed(1) + 'M' : fmt(totalWords);
 
-    const fandomList = [...fandomSet].slice(0, 15);
+    const fandomList = tags.map(t => t.name).slice(0, 15);
     document.getElementById('fandom-box').innerHTML = `
       <h3>Fandoms</h3>
       ${fandomList.length
         ? `<ul>${fandomList.map(f =>
             `<li><a href="browse.html?fandom=${encodeURIComponent(f)}">${esc(f)}</a></li>`).join('')}</ul>`
         : '<div class="empty" style="padding:0.4rem;font-size:0.8rem;">No fandoms yet</div>'}
-      ${fandomSet.size > 15 ? `<div style="font-size:0.75rem;margin-top:0.4rem;text-align:right;"><a href="browse.html">All fandoms →</a></div>` : ''}
+      ${tags.length > 15 ? `<div style="font-size:0.75rem;margin-top:0.4rem;text-align:right;"><a href="browse.html">All fandoms →</a></div>` : ''}
     `;
   } catch (e) {
     document.getElementById('recent-works').innerHTML =
