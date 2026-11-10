@@ -139,7 +139,7 @@ const HEADER_HTML = (activePage) => `
         <button type="submit">Search</button>
       </form>
       <div id="header-user" class="header-user"></div>
-      <button class="btn-api-settings" id="api-settings-btn" title="Configure backend URL">⚙ API</button>
+      <button class="btn-api-settings" id="api-settings-btn" title="Configure backend URL" style="display:none;">⚙ API</button>
     </div>
   </div>
 </div>
@@ -215,6 +215,10 @@ function injectShell(activePage) {
   if (modal)  modal.innerHTML  = MODAL_HTML;
 
   updateHeaderUser();
+
+  // Show API settings button only for admins
+  const apiBtn = document.getElementById('api-settings-btn');
+  if (apiBtn && getStoredUser()?.is_admin) apiBtn.style.display = '';
 
   // Wire API modal
   document.getElementById('api-settings-btn')?.addEventListener('click', () => {

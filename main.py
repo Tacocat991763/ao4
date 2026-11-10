@@ -10,11 +10,21 @@ import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel
 
 DB_PATH = os.environ.get("DB_PATH", "ao4.db")
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _hash_pw(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _verify_pw(password: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode(), hashed.encode())
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +137,7 @@ def _ensure_admin():
         conn.execute(
             "INSERT INTO users(id, username, email, password_hash, is_admin, created_at) "
             "VALUES(?,?,?,?,1,?)",
-            (uid, username, email, pwd_context.hash(password), now),
+            (uid, username, email, _hash_pw(password), now),
         )
         conn.commit()
     conn.close()
@@ -348,7 +358,7 @@ def register(data: RegisterIn, conn=Depends(get_db)):
 
     user_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
-    pw_hash = pwd_context.hash(data.password)
+    pw_hash = _hash_pw(data.password)
 
     conn.execute(
         "INSERT INTO users(id, username, email, password_hash, created_at) VALUES(?,?,?,?,?)",
@@ -371,7 +381,7 @@ def login(data: LoginIn, conn=Depends(get_db)):
     row = conn.execute(
         "SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (data.username,)
     ).fetchone()
-    if not row or not pwd_context.verify(data.password, row["password_hash"]):
+    if not row or not _verify_pw(data.password, row["password_hash"]):
         raise HTTPException(401, "Invalid username or password")
 
     token = str(uuid.uuid4())
