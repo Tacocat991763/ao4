@@ -1,3 +1,4 @@
+import os
 import re
 import socket
 import sqlite3
@@ -11,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
-DB_PATH = "ao4.db"
+DB_PATH = os.environ.get("DB_PATH", "ao4.db")
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +516,8 @@ def list_tags(
 
 if __name__ == "__main__":
     host = "0.0.0.0"
-    port = 8000
+    port = int(os.environ.get("PORT", 8000))
+    reload = os.environ.get("RELOAD", "true").lower() == "true"
     try:
         lan_ip = socket.gethostbyname(socket.gethostname())
     except Exception:
@@ -524,4 +526,4 @@ if __name__ == "__main__":
     print(f"  Local:   http://localhost:{port}")
     print(f"  Network: http://{lan_ip}:{port}")
     print(f"  Docs:    http://{lan_ip}:{port}/docs\n")
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run("main:app", host=host, port=port, reload=reload)
