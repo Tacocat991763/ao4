@@ -178,7 +178,7 @@ async function loadWork() {
 async function maybeShowOwnerControls() {
   const user = getStoredUser();
   if (!user || !work) return;
-  if (work.author_id === user.id) {
+  if (work.author_id === user.id || user.is_admin) {
     document.getElementById('owner-box').style.display = '';
     document.getElementById('delete-work-btn').addEventListener('click', async () => {
       if (!confirm(`Delete "${work.title}"? This cannot be undone.`)) return;

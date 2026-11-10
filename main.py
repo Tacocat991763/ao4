@@ -75,7 +75,13 @@ def init_db():
             username      TEXT NOT NULL UNIQUE,
             email         TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
+            is_admin      INTEGER NOT NULL DEFAULT 0,
             created_at    TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS site_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS sessions (
@@ -85,12 +91,45 @@ def init_db():
             expires_at TEXT NOT NULL
         );
     """)
-    # Migration: add author_id to fics if the column doesn't exist yet
-    try:
-        conn.execute("ALTER TABLE fics ADD COLUMN author_id TEXT REFERENCES users(id)")
+    # Migrations for existing databases
+    for migration in [
+        "ALTER TABLE fics ADD COLUMN author_id TEXT REFERENCES users(id)",
+        "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
+    ]:
+        try:
+            conn.execute(migration)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+    conn.close()
+    _ensure_admin()
+
+
+def _ensure_admin():
+    """Create/promote the admin account on startup using ADMIN_* env vars."""
+    username = os.environ.get("ADMIN_USERNAME", "")
+    password = os.environ.get("ADMIN_PASSWORD", "")
+    email    = os.environ.get("ADMIN_EMAIL", "admin@ao4.local")
+    if not username or not password:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT id, is_admin FROM users WHERE LOWER(username) = LOWER(?)", (username,)
+    ).fetchone()
+    if row:
+        if not row["is_admin"]:
+            conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (row["id"],))
+            conn.commit()
+    else:
+        uid = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            "INSERT INTO users(id, username, email, password_hash, is_admin, created_at) "
+            "VALUES(?,?,?,?,1,?)",
+            (uid, username, email, pwd_context.hash(password), now),
+        )
         conn.commit()
-    except sqlite3.OperationalError:
-        pass
     conn.close()
 
 
@@ -183,6 +222,7 @@ class UserOut(BaseModel):
     id: str
     username: str
     email: str
+    is_admin: bool = False
     created_at: str
 
 
@@ -202,7 +242,7 @@ def _get_current_user(authorization: Optional[str] = Header(None), conn=Depends(
     token = authorization[7:]
     now = datetime.utcnow().isoformat()
     row = conn.execute(
-        "SELECT u.id, u.username, u.email, u.created_at FROM sessions s "
+        "SELECT u.id, u.username, u.email, u.is_admin, u.created_at FROM sessions s "
         "JOIN users u ON u.id = s.user_id "
         "WHERE s.token = ? AND s.expires_at > ?",
         (token, now),
@@ -322,7 +362,7 @@ def register(data: RegisterIn, conn=Depends(get_db)):
     )
     return {
         "token": token,
-        "user": {"id": user_id, "username": data.username, "email": data.email, "created_at": now},
+        "user": {"id": user_id, "username": data.username, "email": data.email, "is_admin": False, "created_at": now},
     }
 
 
@@ -343,7 +383,7 @@ def login(data: LoginIn, conn=Depends(get_db)):
     )
     return {
         "token": token,
-        "user": {"id": row["id"], "username": row["username"], "email": row["email"], "created_at": row["created_at"]},
+        "user": {"id": row["id"], "username": row["username"], "email": row["email"], "is_admin": bool(row["is_admin"]), "created_at": row["created_at"]},
     }
 
 
@@ -458,8 +498,9 @@ def delete_fic(fic_id: str, conn=Depends(get_db), user=Depends(_get_current_user
     row = conn.execute("SELECT author_id FROM fics WHERE id = ?", (fic_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Fic not found")
-    # If the fic was posted by an account, only that account can delete it
-    if row["author_id"] and (not user or user["id"] != row["author_id"]):
+    # Admin can delete anything; otherwise only the owner can delete account-posted works
+    is_admin = user and user.get("is_admin")
+    if row["author_id"] and not is_admin and (not user or user["id"] != row["author_id"]):
         raise HTTPException(403, "You can only delete your own works")
     conn.execute("DELETE FROM fics WHERE id = ?", (fic_id,))
 
@@ -478,7 +519,8 @@ def add_chapter(fic_id: str, chapter: ChapterAddIn, conn=Depends(get_db), user=D
     row = conn.execute("SELECT * FROM fics WHERE id = ?", (fic_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Fic not found")
-    if row["author_id"] and (not user or user["id"] != row["author_id"]):
+    is_admin = user and user.get("is_admin")
+    if row["author_id"] and not is_admin and (not user or user["id"] != row["author_id"]):
         raise HTTPException(403, "You can only add chapters to your own works")
 
     next_num = conn.execute(
@@ -649,6 +691,48 @@ def get_stats(conn=Depends(get_db)):
         "fandoms": total_fandoms,
         "users":   total_users,
     }
+
+
+@app.get("/admin/settings", summary="Get site settings (admin only)")
+def get_settings(user=Depends(require_user), conn=Depends(get_db)):
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    rows = conn.execute("SELECT key, value FROM site_settings").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+@app.patch("/admin/settings", summary="Update site settings (admin only)")
+def update_settings(payload: dict, user=Depends(require_user), conn=Depends(get_db)):
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    for key, value in payload.items():
+        conn.execute(
+            "INSERT INTO site_settings(key, value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, str(value)),
+        )
+    return {"ok": True}
+
+
+@app.get("/admin/users", summary="List all users (admin only)")
+def list_users(user=Depends(require_user), conn=Depends(get_db)):
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    rows = conn.execute(
+        "SELECT id, username, email, is_admin, created_at FROM users ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.delete("/admin/users/{user_id}", status_code=204, summary="Delete a user (admin only)")
+def delete_user(user_id: str, user=Depends(require_user), conn=Depends(get_db)):
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    if user_id == user["id"]:
+        raise HTTPException(400, "Cannot delete your own account")
+    result = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    if result.rowcount == 0:
+        raise HTTPException(404, "User not found")
 
 
 @app.get("/tags", summary="List all tags (useful for autocomplete)")

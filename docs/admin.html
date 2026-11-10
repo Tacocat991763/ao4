@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — AO4</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .admin-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 1.5rem; }
+  .admin-section h2 { font-size: 1rem; padding: 0.75rem 1rem; margin: 0; border-bottom: 1px solid var(--border); background: var(--bg-alt); }
+  .admin-section-body { padding: 1rem; }
+  .setting-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+  .setting-row label { min-width: 140px; font-size: 0.85rem; font-weight: 600; }
+  .setting-row input[type=text], .setting-row textarea { flex: 1; min-width: 180px; }
+  .setting-row input[type=checkbox] { width: 1.1rem; height: 1.1rem; cursor: pointer; }
+  .user-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .user-table th { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 2px solid var(--border); color: var(--text-soft); }
+  .user-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+  .user-table tr:last-child td { border-bottom: none; }
+  .badge-admin { background: var(--red); color: white; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 3px; font-weight: 700; }
+  .btn-sm { font-size: 0.78rem; padding: 0.2rem 0.6rem; border-radius: 3px; cursor: pointer; border: 1px solid var(--border); background: none; color: var(--text-soft); }
+  .btn-sm:hover { background: #c0392b; color: white; border-color: #c0392b; }
+  .save-status { font-size: 0.82rem; color: #2ecc71; margin-left: 0.5rem; }
+</style>
+</head>
+<body>
+
+<div id="shell-header"></div>
+
+<div id="main" class="full-width">
+  <div id="content" style="max-width:860px;margin:1.5rem auto;">
+
+    <h1 style="font-size:1.4rem;margin-bottom:1.25rem;">Admin Panel</h1>
+
+    <!-- Archive stats -->
+    <div class="admin-section">
+      <h2>Archive Stats</h2>
+      <div class="admin-section-body">
+        <div class="stats-grid" id="admin-stats">
+          <div class="stat-item"><span class="stat-num" id="as-fics">—</span><span class="stat-label">Works</span></div>
+          <div class="stat-item"><span class="stat-num" id="as-users">—</span><span class="stat-label">Users</span></div>
+          <div class="stat-item"><span class="stat-num" id="as-fandoms">—</span><span class="stat-label">Fandoms</span></div>
+          <div class="stat-item"><span class="stat-num" id="as-words">—</span><span class="stat-label">Words</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Site settings -->
+    <div class="admin-section">
+      <h2>Site Settings <span class="save-status" id="settings-saved" style="display:none;">✓ Saved</span></h2>
+      <div class="admin-section-body">
+        <div class="setting-row">
+          <label>Site Name</label>
+          <input type="text" id="s-name" placeholder="Archive of Our Four">
+        </div>
+        <div class="setting-row">
+          <label>Announcement</label>
+          <textarea id="s-announcement" rows="2" placeholder="Leave blank for none. Shown at the top of the homepage."></textarea>
+        </div>
+        <div class="setting-row">
+          <label>Allow New Uploads</label>
+          <input type="checkbox" id="s-uploads" checked>
+          <span style="font-size:0.82rem;color:var(--text-soft);">Uncheck to disable new work submissions</span>
+        </div>
+        <div class="setting-row">
+          <label>Allow Registration</label>
+          <input type="checkbox" id="s-registration" checked>
+          <span style="font-size:0.82rem;color:var(--text-soft);">Uncheck to close new account creation</span>
+        </div>
+        <div style="margin-top:0.75rem;">
+          <button class="btn-submit" id="save-settings-btn">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- User management -->
+    <div class="admin-section">
+      <h2>Users</h2>
+      <div class="admin-section-body">
+        <div id="users-loading" class="loading" style="padding:1rem;">Loading…</div>
+        <table class="user-table" id="user-table" style="display:none;">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Joined</th>
+              <th>Role</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="user-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="shell-footer"></div>
+<div id="shell-modal"></div>
+
+<script src="app.js"></script>
+<script>
+injectShell('');
+
+// Guard: redirect non-admins
+(function() {
+  const user = getStoredUser();
+  if (!user || !user.is_admin) {
+    document.getElementById('content').innerHTML =
+      '<div class="error-msg" style="margin-top:2rem;">Admin access required. <a href="login.html">Log in</a></div>';
+  }
+})();
+
+async function loadStats() {
+  try {
+    const s = await apiFetch('/stats');
+    document.getElementById('as-fics').textContent    = fmt(s.fics);
+    document.getElementById('as-users').textContent   = fmt(s.users);
+    document.getElementById('as-fandoms').textContent = fmt(s.fandoms);
+    const w = s.words || 0;
+    document.getElementById('as-words').textContent   = w >= 1_000_000 ? (w/1_000_000).toFixed(1)+'M' : fmt(w);
+  } catch {}
+}
+
+async function loadSettings() {
+  try {
+    const s = await apiFetch('/admin/settings');
+    if (s.site_name)     document.getElementById('s-name').value = s.site_name;
+    if (s.announcement)  document.getElementById('s-announcement').value = s.announcement;
+    if (s.allow_uploads !== undefined)
+      document.getElementById('s-uploads').checked = s.allow_uploads !== 'false';
+    if (s.allow_registration !== undefined)
+      document.getElementById('s-registration').checked = s.allow_registration !== 'false';
+  } catch {}
+}
+
+document.getElementById('save-settings-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('save-settings-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    await apiFetch('/admin/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        site_name:         document.getElementById('s-name').value.trim(),
+        announcement:      document.getElementById('s-announcement').value.trim(),
+        allow_uploads:     document.getElementById('s-uploads').checked ? 'true' : 'false',
+        allow_registration: document.getElementById('s-registration').checked ? 'true' : 'false',
+      }),
+    });
+    const saved = document.getElementById('settings-saved');
+    saved.style.display = '';
+    setTimeout(() => saved.style.display = 'none', 3000);
+  } catch (err) {
+    alert('Save failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Settings';
+  }
+});
+
+async function loadUsers() {
+  try {
+    const users = await apiFetch('/admin/users');
+    const me = getStoredUser();
+    document.getElementById('users-loading').style.display = 'none';
+    document.getElementById('user-table').style.display = '';
+    document.getElementById('user-tbody').innerHTML = users.map(u => `
+      <tr>
+        <td><strong>${esc(u.username)}</strong></td>
+        <td>${esc(u.email)}</td>
+        <td>${fmtDate(u.created_at)}</td>
+        <td>${u.is_admin ? '<span class="badge-admin">Admin</span>' : 'User'}</td>
+        <td>${u.id !== me.id && !u.is_admin
+          ? `<button class="btn-sm" onclick="deleteUser('${esc(u.id)}','${esc(u.username)}')">Delete</button>`
+          : ''}</td>
+      </tr>`).join('');
+  } catch (err) {
+    document.getElementById('users-loading').textContent = 'Failed to load users: ' + err.message;
+  }
+}
+
+async function deleteUser(id, name) {
+  if (!confirm(`Delete user "${name}"? This will also delete all their works.`)) return;
+  try {
+    await apiFetch(`/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    loadUsers();
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
+
+loadStats();
+loadSettings();
+loadUsers();
+</script>
+</body>
+</html>

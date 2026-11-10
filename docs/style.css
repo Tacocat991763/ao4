@@ -833,6 +833,8 @@ ol.work-listing {
 .header-username:hover { color: white; text-decoration: underline; }
 .header-logout { color: #999; font-size: 0.75rem; }
 .header-logout:hover { color: #ccc; text-decoration: underline; }
+.header-admin { color: #e8d5a3; font-size: 0.75rem; background: rgba(153,0,0,0.5); padding: 0.1rem 0.4rem; border-radius: 3px; }
+.header-admin:hover { background: var(--red); color: white; }
 
 /* Login page */
 #auth-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }

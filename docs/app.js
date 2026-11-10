@@ -193,7 +193,8 @@ function updateHeaderUser() {
   const el = document.getElementById('header-user');
   if (!el) return;
   if (user) {
-    el.innerHTML = `<a href="login.html" class="header-username">${esc(user.username)}</a><a href="#" id="logout-link" class="header-logout">Log out</a>`;
+    const adminLink = user.is_admin ? `<a href="admin.html" class="header-admin">Admin</a>` : '';
+    el.innerHTML = `${adminLink}<a href="login.html" class="header-username">${esc(user.username)}</a><a href="#" id="logout-link" class="header-logout">Log out</a>`;
     document.getElementById('logout-link')?.addEventListener('click', async (e) => {
       e.preventDefault();
       try { await apiFetch('/auth/logout', { method: 'POST' }); } catch {}
